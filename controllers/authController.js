@@ -107,4 +107,43 @@ const getMe = async (req, res) => {
     }
 };
 
-module.exports = { register, login, firebaseLogin, getMe };
+const updateProfile = async (req, res) => {
+    try {
+        const { name, phone, location, bio, avatar } = req.body;
+        const updates = {};
+
+        if (typeof name === "string") {
+            const cleanName = name.trim();
+            if (!cleanName) {
+                return res.status(400).json({ message: "Name is required" });
+            }
+            updates.name = cleanName;
+        }
+
+        if (typeof phone === "string") updates.phone = phone.trim().slice(0, 30);
+        if (typeof location === "string") updates.location = location.trim().slice(0, 80);
+        if (typeof bio === "string") updates.bio = bio.trim().slice(0, 280);
+
+        if (typeof avatar === "string") {
+            const cleanAvatar = avatar.trim();
+            if (cleanAvatar && cleanAvatar.length > 1500000) {
+                return res.status(400).json({ message: "Profile picture is too large" });
+            }
+            if (cleanAvatar && !cleanAvatar.startsWith("data:image/") && !cleanAvatar.startsWith("http")) {
+                return res.status(400).json({ message: "Invalid profile picture format" });
+            }
+            updates.avatar = cleanAvatar;
+        }
+
+        const user = await User.findByIdAndUpdate(req.user._id, updates, {
+            new: true,
+            runValidators: true,
+        }).select("-password");
+
+        return res.status(200).json({ user });
+    } catch (error) {
+        return res.status(500).json({ message: error.message });
+    }
+};
+
+module.exports = { register, login, firebaseLogin, getMe, updateProfile };

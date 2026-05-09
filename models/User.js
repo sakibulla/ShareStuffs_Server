@@ -26,6 +26,22 @@ const userSchema = new mongoose.Schema(
             type: String,
             default: "",
         },
+        phone: {
+            type: String,
+            default: "",
+            trim: true,
+        },
+        location: {
+            type: String,
+            default: "",
+            trim: true,
+        },
+        bio: {
+            type: String,
+            default: "",
+            trim: true,
+            maxlength: 280,
+        },
         role: {
             type: String,
             enum: ["lender", "borrower", "both"],

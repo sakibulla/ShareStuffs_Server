@@ -20,7 +20,7 @@ app.use(
         credentials: true,
     })
 );
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
 app.get("/", (req, res) => {
     res.json({ message: "ShareStuff backend is running" });
