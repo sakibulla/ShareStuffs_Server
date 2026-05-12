@@ -34,6 +34,19 @@ const requestSchema = new mongoose.Schema(
             type: Number,
             default: 0,
         },
+        depositAmount: {
+            type: Number,
+            default: 0,
+        },
+        paymentStatus: {
+            type: String,
+            enum: ["unpaid", "paid"],
+            default: "unpaid",
+        },
+        stripeSessionId: {
+            type: String,
+            default: null,
+        },
     },
     {
         timestamps: true,
