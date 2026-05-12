@@ -69,4 +69,19 @@ const getReviewsByUser = async (req, res) => {
     }
 };
 
-module.exports = { createReview, getReviewsByUser };
+const getMyReviews = async (req, res) => {
+    try {
+        // Reviews the current user has written (as reviewer)
+        const reviews = await Review.find({ reviewer: req.user._id })
+            .select("request")
+            .lean();
+
+        // Return just the requestIds so the frontend knows which requests are already reviewed
+        const reviewedRequestIds = reviews.map((r) => r.request.toString());
+        return res.status(200).json(reviewedRequestIds);
+    } catch (error) {
+        return res.status(500).json({ message: error.message });
+    }
+};
+
+module.exports = { createReview, getReviewsByUser, getMyReviews };
