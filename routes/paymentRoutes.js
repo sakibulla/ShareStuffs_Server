@@ -4,6 +4,7 @@ const {
     handleWebhook,
     verifyPayment,
     getPaymentHistory,
+    refundPayment,
 } = require("../controllers/paymentController");
 const authMiddleware = require("../middleware/authMiddleware");
 
@@ -17,5 +18,6 @@ router.post("/webhook", express.raw({ type: "application/json" }), handleWebhook
 router.post("/create-checkout-session", authMiddleware, createCheckoutSession);
 router.get("/verify", authMiddleware, verifyPayment);
 router.get("/history", authMiddleware, getPaymentHistory);
+router.post("/refund", authMiddleware, refundPayment);
 
 module.exports = router;

@@ -59,13 +59,22 @@ const userSchema = new mongoose.Schema(
             type: Number,
             default: 0,
         },
+        accountBalance: {
+            type: Number,
+            default: 0,
+        },
+        totalPenalties: {
+            type: Number,
+            default: 0,
+        },
         paymentHistory: [
             {
                 requestId: { type: mongoose.Schema.Types.ObjectId, ref: "Request" },
                 itemTitle: { type: String },
                 amount: { type: Number },
                 paidAt: { type: Date, default: Date.now },
-                type: { type: String, enum: ["received", "paid"], default: "received" },
+                type: { type: String, enum: ["received", "paid", "refunded", "penalty"], default: "received" },
+                reason: { type: String, default: null },
             },
         ],
     },

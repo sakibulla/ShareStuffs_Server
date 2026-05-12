@@ -1,10 +1,14 @@
 const Item = require("../models/Item");
 const Request = require("../models/Request");
+const User = require("../models/User");
 
 const calculateFee = (startDate, endDate, dailyFee, deposit) => {
     const days = Math.max(1, Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)));
     return days * dailyFee + deposit;
 };
+
+// Penalty rate: 10% of daily fee per day late
+const PENALTY_RATE = 0.1;
 
 const createRequest = async (req, res) => {
     try {
@@ -76,16 +80,60 @@ const updateRequestStatus = async (req, res) => {
             return res.status(400).json({ message: "Status must be accepted, rejected, delivered, or returned" });
         }
 
-        const request = await Request.findById(req.params.id).populate("item");
+        const request = await Request.findById(req.params.id)
+            .populate("item")
+            .populate("borrower")
+            .populate("lender");
+
         if (!request) {
             return res.status(404).json({ message: "Request not found" });
         }
 
-        const isLender = request.lender.toString() === req.user._id.toString();
-        const isBorrower = request.borrower.toString() === req.user._id.toString();
+        const isLender = request.lender._id.toString() === req.user._id.toString();
+        const isBorrower = request.borrower._id.toString() === req.user._id.toString();
 
         // Lender can accept, reject, delivered, or mark returned
         if (isLender && ["accepted", "rejected", "delivered", "returned"].includes(status)) {
+            // Handle rejection with refund
+            if (status === "rejected" && request.paymentStatus === "paid") {
+                const refundAmount = request.totalFee;
+
+                request.paymentStatus = "refunded";
+                request.refundAmount = refundAmount;
+                request.refundReason = "Request rejected by lender";
+                request.refundedAt = new Date();
+
+                // Refund to borrower
+                await User.findByIdAndUpdate(request.borrower._id, {
+                    $inc: { accountBalance: refundAmount },
+                    $push: {
+                        paymentHistory: {
+                            requestId: request._id,
+                            itemTitle: request.item.title,
+                            amount: refundAmount,
+                            paidAt: new Date(),
+                            type: "refunded",
+                            reason: "Request rejected by lender",
+                        },
+                    },
+                });
+
+                // Deduct from lender
+                await User.findByIdAndUpdate(request.lender._id, {
+                    $inc: { totalEarned: -refundAmount, accountBalance: -refundAmount },
+                    $push: {
+                        paymentHistory: {
+                            requestId: request._id,
+                            itemTitle: request.item.title,
+                            amount: refundAmount,
+                            paidAt: new Date(),
+                            type: "refunded",
+                            reason: "Refund issued - request rejected",
+                        },
+                    },
+                });
+            }
+
             request.status = status;
             await request.save();
 
@@ -98,6 +146,53 @@ const updateRequestStatus = async (req, res) => {
         }
         // Borrower can mark delivered or returned
         else if (isBorrower && ["delivered", "returned"].includes(status)) {
+            // Handle late return penalty
+            if (status === "returned") {
+                const now = new Date();
+                const endDate = new Date(request.endDate);
+                const daysLate = Math.max(0, Math.ceil((now - endDate) / (1000 * 60 * 60 * 24)));
+
+                if (daysLate > 0 && request.paymentStatus === "paid") {
+                    const dailyFee = request.item.dailyFee || 0;
+                    const penalty = Math.round(dailyFee * PENALTY_RATE * daysLate * 100) / 100;
+
+                    request.latePenalty = penalty;
+                    request.daysLate = daysLate;
+                    request.penaltyAppliedAt = new Date();
+                    request.actualReturnDate = now;
+
+                    // Deduct penalty from borrower
+                    await User.findByIdAndUpdate(request.borrower._id, {
+                        $inc: { accountBalance: -penalty, totalPenalties: penalty },
+                        $push: {
+                            paymentHistory: {
+                                requestId: request._id,
+                                itemTitle: request.item.title,
+                                amount: penalty,
+                                paidAt: new Date(),
+                                type: "penalty",
+                                reason: `Late return penalty: ${daysLate} day(s) late`,
+                            },
+                        },
+                    });
+
+                    // Credit penalty to lender
+                    await User.findByIdAndUpdate(request.lender._id, {
+                        $inc: { accountBalance: penalty, totalEarned: penalty },
+                        $push: {
+                            paymentHistory: {
+                                requestId: request._id,
+                                itemTitle: request.item.title,
+                                amount: penalty,
+                                paidAt: new Date(),
+                                type: "penalty",
+                                reason: `Late return penalty received: ${daysLate} day(s) late`,
+                            },
+                        },
+                    });
+                }
+            }
+
             request.status = status;
             await request.save();
 

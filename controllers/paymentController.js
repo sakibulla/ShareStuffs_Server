@@ -17,7 +17,7 @@ function getStripe() {
 
 /**
  * POST /api/payments/create-checkout-session
- * Creates a Stripe Checkout session for the deposit of a request.
+ * Creates a Stripe Checkout session for the FULL AMOUNT (deposit + daily fees).
  */
 const createCheckoutSession = async (req, res) => {
     try {
@@ -44,9 +44,14 @@ const createCheckoutSession = async (req, res) => {
             return res.status(400).json({ message: "This request has already been paid" });
         }
 
+        // Calculate FULL AMOUNT: deposit + daily fees
         const depositAmount = request.item.deposit || 0;
-        if (depositAmount <= 0) {
-            return res.status(400).json({ message: "No deposit required for this item" });
+        const dailyFee = request.item.dailyFee || 0;
+        const days = Math.max(1, Math.ceil((request.endDate - request.startDate) / (1000 * 60 * 60 * 24)));
+        const totalAmount = depositAmount + (days * dailyFee);
+
+        if (totalAmount <= 0) {
+            return res.status(400).json({ message: "No payment required for this item" });
         }
 
         const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
@@ -60,10 +65,10 @@ const createCheckoutSession = async (req, res) => {
                     price_data: {
                         currency: "usd",
                         product_data: {
-                            name: `Deposit for: ${request.item.title}`,
-                            description: `Security deposit for borrowing "${request.item.title}" from ${request.lender.name}`,
+                            name: `Full Payment for: ${request.item.title}`,
+                            description: `Security deposit (৳${depositAmount}) + ${days} day(s) rental (৳${days * dailyFee}) from ${request.lender.name}`,
                         },
-                        unit_amount: Math.round(depositAmount * 100),
+                        unit_amount: Math.round(totalAmount * 100),
                     },
                     quantity: 1,
                 },
@@ -73,6 +78,9 @@ const createCheckoutSession = async (req, res) => {
                 borrowerId: request.borrower._id.toString(),
                 lenderId: request.lender._id.toString(),
                 depositAmount: depositAmount.toString(),
+                dailyFee: dailyFee.toString(),
+                days: days.toString(),
+                totalAmount: totalAmount.toString(),
                 itemTitle: request.item.title,
             },
             success_url: `${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
@@ -81,9 +89,10 @@ const createCheckoutSession = async (req, res) => {
 
         request.stripeSessionId = session.id;
         request.depositAmount = depositAmount;
+        request.totalFee = totalAmount;
         await request.save();
 
-        return res.status(200).json({ url: session.url, sessionId: session.id });
+        return res.status(200).json({ url: session.url, sessionId: session.id, totalAmount });
     } catch (error) {
         console.error("Stripe checkout error:", error.message, error.stack);
         return res.status(500).json({ message: error.message });
@@ -170,19 +179,20 @@ const getPaymentHistory = async (req, res) => {
 // ─── Internal helper ────────────────────────────────────────────────────────
 
 async function fulfillPayment(session) {
-    const { requestId, lenderId, depositAmount, itemTitle } = session.metadata || {};
+    const { requestId, lenderId, depositAmount, dailyFee, days, totalAmount, itemTitle } = session.metadata || {};
     if (!requestId) return;
 
     const request = await Request.findById(requestId);
     if (!request || request.paymentStatus === "paid") return;
 
-    const amount = parseFloat(depositAmount) || 0;
+    const amount = parseFloat(totalAmount) || 0;
 
     request.paymentStatus = "paid";
     await request.save();
 
+    // Credit FULL AMOUNT to lender
     await User.findByIdAndUpdate(lenderId, {
-        $inc: { totalEarned: amount },
+        $inc: { totalEarned: amount, accountBalance: amount },
         $push: {
             paymentHistory: {
                 requestId: request._id,
@@ -190,11 +200,14 @@ async function fulfillPayment(session) {
                 amount,
                 paidAt: new Date(),
                 type: "received",
+                reason: "Full payment received",
             },
         },
     });
 
+    // Deduct FULL AMOUNT from borrower's account balance
     await User.findByIdAndUpdate(request.borrower, {
+        $inc: { accountBalance: -amount },
         $push: {
             paymentHistory: {
                 requestId: request._id,
@@ -202,9 +215,85 @@ async function fulfillPayment(session) {
                 amount,
                 paidAt: new Date(),
                 type: "paid",
+                reason: "Full payment for rental",
             },
         },
     });
 }
 
-module.exports = { createCheckoutSession, handleWebhook, verifyPayment, getPaymentHistory };
+/**
+ * POST /api/payments/refund
+ * Refunds payment when request is rejected or payment fails.
+ */
+const refundPayment = async (req, res) => {
+    try {
+        const { requestId, reason } = req.body;
+        if (!requestId || !reason) {
+            return res.status(400).json({ message: "requestId and reason are required" });
+        }
+
+        const request = await Request.findById(requestId)
+            .populate("item", "title")
+            .populate("borrower", "name email")
+            .populate("lender", "name");
+
+        if (!request) {
+            return res.status(404).json({ message: "Request not found" });
+        }
+
+        // Only lender can refund (when rejecting)
+        if (request.lender.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: "Only the lender can refund this request" });
+        }
+
+        if (request.paymentStatus !== "paid") {
+            return res.status(400).json({ message: "This request has not been paid yet" });
+        }
+
+        const refundAmount = request.totalFee;
+
+        // Update request
+        request.paymentStatus = "refunded";
+        request.refundAmount = refundAmount;
+        request.refundReason = reason;
+        request.refundedAt = new Date();
+        await request.save();
+
+        // Refund to borrower's account balance
+        await User.findByIdAndUpdate(request.borrower._id, {
+            $inc: { accountBalance: refundAmount },
+            $push: {
+                paymentHistory: {
+                    requestId: request._id,
+                    itemTitle: request.item.title,
+                    amount: refundAmount,
+                    paidAt: new Date(),
+                    type: "refunded",
+                    reason: `Refund: ${reason}`,
+                },
+            },
+        });
+
+        // Deduct from lender's account balance
+        await User.findByIdAndUpdate(request.lender._id, {
+            $inc: { totalEarned: -refundAmount, accountBalance: -refundAmount },
+            $push: {
+                paymentHistory: {
+                    requestId: request._id,
+                    itemTitle: request.item.title,
+                    amount: refundAmount,
+                    paidAt: new Date(),
+                    type: "refunded",
+                    reason: `Refund issued: ${reason}`,
+                },
+            },
+        });
+
+        return res.status(200).json({ message: "Payment refunded successfully", refundAmount });
+    } catch (error) {
+        console.error("Refund error:", error.message);
+        return res.status(500).json({ message: error.message });
+    }
+};
+
+module.exports = { createCheckoutSession, handleWebhook, verifyPayment, getPaymentHistory, refundPayment };

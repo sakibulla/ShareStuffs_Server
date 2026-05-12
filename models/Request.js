@@ -25,6 +25,10 @@ const requestSchema = new mongoose.Schema(
             type: Date,
             required: true,
         },
+        actualReturnDate: {
+            type: Date,
+            default: null,
+        },
         status: {
             type: String,
             enum: ["pending", "accepted", "rejected", "delivered", "returned"],
@@ -40,11 +44,37 @@ const requestSchema = new mongoose.Schema(
         },
         paymentStatus: {
             type: String,
-            enum: ["unpaid", "paid"],
+            enum: ["unpaid", "paid", "refunded"],
             default: "unpaid",
         },
         stripeSessionId: {
             type: String,
+            default: null,
+        },
+        // Refund tracking
+        refundAmount: {
+            type: Number,
+            default: 0,
+        },
+        refundReason: {
+            type: String,
+            default: null,
+        },
+        refundedAt: {
+            type: Date,
+            default: null,
+        },
+        // Late return penalty
+        latePenalty: {
+            type: Number,
+            default: 0,
+        },
+        daysLate: {
+            type: Number,
+            default: 0,
+        },
+        penaltyAppliedAt: {
+            type: Date,
             default: null,
         },
     },
