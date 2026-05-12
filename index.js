@@ -3,6 +3,15 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 
+// import routes
+const authRoutes = require("./routes/authRoutes");
+const itemRoutes = require("./routes/itemRoutes");
+const messageRoutes = require("./routes/messageRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
+const requestRoutes = require("./routes/requestRoutes");
+const reviewRoutes = require("./routes/reviewRoutes");
+const sensorRoutes = require("./routes/sensorRoutes");
+
 // create app
 const app = express();
 
@@ -20,10 +29,14 @@ app.get("/", (req, res) => {
     res.send("Server is running 🚀");
 });
 
-// sample API route
-app.get("/api/test", (req, res) => {
-    res.json({ message: "API working perfectly" });
-});
+// API routes
+app.use("/api/auth", authRoutes);
+app.use("/api/items", itemRoutes);
+app.use("/api/messages", messageRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/requests", requestRoutes);
+app.use("/api/reviews", reviewRoutes);
+app.use("/api/sensors", sensorRoutes);
 
 // port
 const PORT = process.env.PORT || 5000;
