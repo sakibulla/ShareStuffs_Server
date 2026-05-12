@@ -72,26 +72,41 @@ const getLenderRequests = async (req, res) => {
 const updateRequestStatus = async (req, res) => {
     try {
         const { status } = req.body;
-        if (!status || !["accepted", "rejected", "returned"].includes(status)) {
-            return res.status(400).json({ message: "Status must be accepted, rejected, or returned" });
+        if (!status || !["accepted", "rejected", "delivered", "returned"].includes(status)) {
+            return res.status(400).json({ message: "Status must be accepted, rejected, delivered, or returned" });
         }
 
         const request = await Request.findById(req.params.id).populate("item");
         if (!request) {
             return res.status(404).json({ message: "Request not found" });
         }
-        if (request.lender.toString() !== req.user._id.toString()) {
-            return res.status(403).json({ message: "Forbidden: only the lender can update this request" });
-        }
 
-        request.status = status;
-        await request.save();
+        const isLender = request.lender.toString() === req.user._id.toString();
+        const isBorrower = request.borrower.toString() === req.user._id.toString();
 
-        if (status === "accepted") {
-            await Item.findByIdAndUpdate(request.item._id, { available: false });
+        // Lender can accept, reject, delivered, or mark returned
+        if (isLender && ["accepted", "rejected", "delivered", "returned"].includes(status)) {
+            request.status = status;
+            await request.save();
+
+            if (status === "accepted") {
+                await Item.findByIdAndUpdate(request.item._id, { available: false });
+            }
+            if (status === "returned") {
+                await Item.findByIdAndUpdate(request.item._id, { available: true });
+            }
         }
-        if (status === "returned") {
-            await Item.findByIdAndUpdate(request.item._id, { available: true });
+        // Borrower can mark delivered or returned
+        else if (isBorrower && ["delivered", "returned"].includes(status)) {
+            request.status = status;
+            await request.save();
+
+            if (status === "returned") {
+                await Item.findByIdAndUpdate(request.item._id, { available: true });
+            }
+        }
+        else {
+            return res.status(403).json({ message: "Forbidden: you don't have permission to update this request" });
         }
 
         const updatedRequest = await Request.findById(request._id)
